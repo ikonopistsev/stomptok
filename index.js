@@ -66,7 +66,7 @@ const isHeaderContentLength = (value) => {
 class StompTok extends EventEmitter {
     constructor() {
         super();
-        this.stackBuf = new ParserStack(32);
+        this.stackBuf = new ParserStack(2048);
         this.parseState = this.startState;
         // header 'content-length' data
         this.contentLength = 0;
