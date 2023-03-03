@@ -91,6 +91,13 @@ class StompTok extends EventEmitter {
         this.isContentLength = false;
     }
 
+    callNextState(idx, data, nextState) {
+        this.parseState = nextState;
+        const rc = data.subarray(idx);
+        return (idx < data.length) ? 
+            this.parseState(rc) : rc;
+    }
+
     startState(data) {
         let idx = 0;
         const { length } = data;
@@ -111,10 +118,8 @@ class StompTok extends EventEmitter {
             this.contentLength = 0;
             this.contentLeft = 0;
             this.isContentLength = false;
-            this.parseState = this.methodState;
-            const rc = data.subarray(idx);
-            return (idx < length) ? 
-                this.parseState(rc) : rc;
+            return this.callNextState(idx, 
+                data, this.methodState);
         } while (idx < length);
         // завершаем парсинг достигли конца буфера
         return { length: 0 };
@@ -131,22 +136,19 @@ class StompTok extends EventEmitter {
                     return data.subarray(idx); 
                 }
             } else {
-                const rc = data.subarray(idx);
                 if (ch == NL) {
                     const method = this.stackBuf.pop();
                     this.emitMethod(method);
-                    this.parseState = this.hdrLineDone;
-                    return (idx < length) ? 
-                        this.parseState(rc) : rc;
+                    return this.callNextState(idx, 
+                        data, this.hdrLineDone);
                 } else if (ch == NR) {
                     const method = this.stackBuf.pop();
                     this.emitMethod(method);
-                    this.parseState = this.hdrLineAlmostDone;
-                    return (idx < length) ? 
-                        this.parseState(rc) : rc;
+                    return this.callNextState(idx, 
+                        data, this.hdrLineAlmostDone);
                 } else {
                     this.emitOnError('inval_method');
-                    return rc; 
+                    return data.subarray(idx); 
                 }
             }
         } while (idx < length)
@@ -162,10 +164,8 @@ class StompTok extends EventEmitter {
             return data.subarray(idx); 
         }
 
-        this.parseState = this.hdrLineDone;
-        const rc = data.subarray(idx);
-        return (idx < data.length) ? 
-            this.parseState(rc) : rc;
+        return this.callNextState(idx, 
+            data, this.hdrLineDone);
     }
 
     hdrLineDone(data) {
@@ -178,10 +178,8 @@ class StompTok extends EventEmitter {
             return (idx < length) ? 
                 this.parseState(rc) : rc;
         } else if (ch == NL) {
-            this.parseState = this.doneState;
-            const rc = data.subarray(idx);
-            return (idx < length) ? 
-                this.parseState(rc) : rc;
+            return this.callNextState(idx, 
+                data, this.doneState);
         }
 
         if (!isPrintNoSpace(ch)) {
@@ -194,10 +192,8 @@ class StompTok extends EventEmitter {
             return data.subarray(idx); 
         }
 
-        this.parseState = this.hdrLineKey;
-        const rc = data.subarray(idx);
-        return (idx < length) ? 
-            this.parseState(rc) : rc;
+        return this.callNextState(idx, 
+            data, this.hdrLineKey);
     }
 
     hdrLineKey(data) {
@@ -208,10 +204,8 @@ class StompTok extends EventEmitter {
             if (ch == D2) {
                 const headerKey = this.stackBuf.pop();
                 this.emitHeaderKey(headerKey);
-                this.parseState = this.hdrLineVal;
-                const rc = data.subarray(idx);
-                return (idx < length) ? 
-                    this.parseState(rc) : rc;
+                return this.callNextState(idx, 
+                    data, this.hdrLineVal);                
             } else {
                 if (isPrintNoSpace(ch)) {
                     if (!this.stackBuf.push(ch)) {
@@ -222,15 +216,12 @@ class StompTok extends EventEmitter {
                         return data.subarray(idx); 
                     }
                 } else {
-                    const rc = data.subarray(idx);
                     if (ch == NL) {
-                        this.parseState = this.hdrLineDone;
-                        return (idx < length) ? 
-                            this.parseState(rc) : rc;
+                        return this.callNextState(idx, 
+                            data, this.hdrLineDone);                          
                     } else if (ch == NR) {
-                        this.parseState = this.hdrLineAlmostDone;
-                        return (idx < length) ? 
-                            this.parseState(rc) : rc;
+                        return this.callNextState(idx, 
+                            data, this.hdrLineAlmostDone);                          
                     } else {
                         this.emitOnError('inval_frame');
                         // FIXME: тут надо какбы переходить на новый фрейм
@@ -258,19 +249,16 @@ class StompTok extends EventEmitter {
                     return data.subarray(idx); 
                 }
             } else {
-                const rc = data.subarray(idx);
                 if (ch == NR) {
                     const headerVal = this.stackBuf.pop();
                     this.emitHeaderVal(headerVal);
-                    this.parseState = this.hdrLineAlmostDone;
-                    return (idx < length) ? 
-                        this.parseState(rc) : rc;
+                    return this.callNextState(idx, 
+                        data, this.hdrLineAlmostDone);   
                 } else if (ch == NL) {
                     const headerVal = this.stackBuf.pop();
                     this.emitHeaderVal(headerVal);
-                    this.parseState = this.hdrLineDone;
-                    return (idx < length) ? 
-                        this.parseState(rc) : rc;
+                    return this.callNextState(idx, 
+                        data, this.hdrLineDone);   
                 } else {
                     this.emitOnError('inval_frame');
                     // FIXME: тут надо какбы переходить на новый фрейм
@@ -294,30 +282,25 @@ class StompTok extends EventEmitter {
             return data.subarray(idx); 
         }
     
-        this.parseState = this.doneState;
-        const rc = data.subarray(idx);
-        return (idx < data.length) ? 
-            this.parseState(rc) : rc;
+        return this.callNextState(idx, 
+            data, this.doneState);
     }
 
     doneState(data) {
         let idx = 0;
         let ch = data[idx];
+        let { parseState } = this;
         if (ch == EOF) {
             ++idx;
-            this.parseState = this.startState;
+            parseState = this.startState;
             this.emitOnFrameEnd();
         } else {
-            if (this.contentLeft > 0) {
-                this.parseState = this.bodyRead;
-            } else  {
-                this.parseState = this.bodyReadNoLength;
-            }
+            parseState = (this.contentLeft > 0) ? this.bodyRead : 
+                this.bodyReadNoLength
         }
     
-        const rc = data.subarray(idx);
-        return (idx < data.length) ? 
-            this.parseState(rc) : rc;
+        return this.callNextState(idx, 
+            data, parseState);
     }
 
     bodyRead(data) {
@@ -330,23 +313,24 @@ class StompTok extends EventEmitter {
             this.emitOnBody(data.subarray(0, idx));
         }
 
+        let { parseState } = this;
         if (contentLength == 0) {
-            this.parseState = this.frameEnd;
+            parseState = this.frameEnd;
         }
 
-        const rc = data.subarray(idx);
-        return (idx < data.length) ? 
-            this.parseState(rc) : rc;
+        return this.callNextState(idx, 
+            data, parseState);
     }
 
     bodyReadNoLength(data) {
         let idx = 0;
         const { length } = data;
+        let { parseState } = this;
         do {
             let ch = data[idx++];
             if (ch == EOF) {
                 // если достигли конца переходим к новому фрейму
-                this.parseState = this.frameEnd;
+                parseState = this.frameEnd;
                 // вернемся назад чтобы обработать каллбек
                 --idx;
                 break;
@@ -357,16 +341,14 @@ class StompTok extends EventEmitter {
             this.emitOnBody(data.subarray(0, idx));
         }
     
-        const rc = data.subarray(idx);
-        return (idx < length) ? 
-            this.parseState(rc) : rc;
+        return this.callNextState(idx, 
+            data, parseState);
     }
 
     frameEnd(data) {
         let idx = 0;
         this.parseState = this.startState;
         const ch = data[idx++];
-
         if (ch != EOF) {
             this.emitOnError('inval_frame');
         }
@@ -377,8 +359,8 @@ class StompTok extends EventEmitter {
         const rc = data.subarray(idx);
         return rc;
         // FIXME: длинна рекурсии
-        return (idx < data.length) ? 
-            this.parseState(rc) : rc;
+        return this.callNextState(idx, 
+            data, this.startState);        
     }
 
     emitFrameStart() {
@@ -413,12 +395,12 @@ class StompTok extends EventEmitter {
                 };
             break;
             case 'body':
-                this.onBody = (value)=> {
+                this.onBody = (value) => {
                     this.emit('body', value);
                 };
             break;
             case 'error':
-                this.onError = (err)=> {
+                this.onError = (err) => {
                     this.emit('error', err);
                 };
             break;
@@ -454,12 +436,12 @@ class StompTok extends EventEmitter {
                 };
             break;
             case 'body':
-                this.onBody = (value)=> {
+                this.onBody = (value) => {
                     this.emit('body', value);
                 };
             break;
             case 'error':
-                this.onError = (err)=> {
+                this.onError = (err) => {
                     this.emit('error', err);
                 };
             break;
@@ -537,4 +519,4 @@ stompTok.on('error', err => {
     console.log('error:', err);
 });
 
-stompTok.parse(Buffer.from('CONNNECT\nmy:friend\nvery:funny\ncontent-length:3\n\nbad body\0'));
+stompTok.parse(Buffer.from('CONNNECT\nmy:friend\nvery:funny\ncontent-length:3\n\nbad body\0CONNNECT\nmy:friend\nvery:funny\n\nbad body\0'));
