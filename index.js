@@ -68,6 +68,7 @@ class StompTok extends EventEmitter {
         this.onHeaderVal = empty;
         this.onBody = empty;
         this.onFrameEnd = empty;
+        this.onError = empty;
         this.isContentLength = false;
     }
 
@@ -80,13 +81,16 @@ class StompTok extends EventEmitter {
             }
 
             if (!isAsciiUpper(ch)) {
-                this.emit('error', 'inval_reqline');
+                this.emitOnError('inval_reqline');
                 return data.subarray(idx);
             }
 
             this.emitFrameStart();
             this.stackBuf.clear();
             this.stackBuf.push(ch);
+            this.contentLength = 0;
+            this.contentLeft = 0;
+            this.isContentLength = false;
             this.parseState = this.methodState;
             const rc = data.subarray(idx);
             return (idx < data.length) ? 
@@ -102,25 +106,25 @@ class StompTok extends EventEmitter {
             let ch = data[idx++];
             if (isAsciiUpper(ch)) {
                 if (!this.stackBuf.push(ch)) {
-                    this.emit('error', 'too_big');
+                    this.emitOnError('too_big');
                     return data.subarray(idx); 
                 }
             } else {
                 const rc = data.subarray(idx);
                 if (ch == NL) {
                     const method = this.stackBuf.pop();
-                    super.emitMethod(method);
+                    this.emitMethod(method);
                     this.parseState = this.hdrLineDone;
                     return (idx < data.length) ? 
                         this.parseState(rc) : rc;
                 } else if (ch == NR) {
                     const method = this.stackBuf.pop();
-                    super.emit('method', method);
+                    this.emitMethod(method);
                     this.parseState = this.hdrLineAlmostDone;
                     return (idx < data.length) ? 
                         this.parseState(rc) : rc;
                 } else {
-                    super.emit('error', 'inval_method');
+                    this.emitOnError('inval_method');
                     return rc; 
                 }
             }
@@ -133,7 +137,7 @@ class StompTok extends EventEmitter {
         let idx = 0;
         const ch = data[idx++];
         if (ch != NL) {
-            super.emit('error', 'inval_method');
+            this.emitOnError('inval_method');
             return data.subarray(idx); 
         }
 
@@ -159,12 +163,12 @@ class StompTok extends EventEmitter {
         }
 
         if (!isPrintNoSpace(ch)) {
-            super.emit('error', 'inval_reqline');
+            this.emitOnError('inval_reqline');
             return data.subarray(idx); 
         }
 
         if (!this.stackBuf.push(ch)) {
-            this.emit('error', 'too_big');
+            this.emitOnError('too_big');
             return data.subarray(idx); 
         }
 
@@ -180,7 +184,7 @@ class StompTok extends EventEmitter {
             let ch = data[idx++];
             if (ch == D2) {
                 const headerKey = this.stackBuf.pop();
-                this.emit('headerKey', headerKey);
+                this.emitHeaderKey(headerKey);
                 this.parseState = this.hdrLineVal;
                 const rc = data.subarray(idx);
                 return (idx < data.length) ? 
@@ -188,7 +192,7 @@ class StompTok extends EventEmitter {
             } else {
                 if (isPrintNoSpace(ch)) {
                     if (!this.stackBuf.push(ch)) {
-                        this.emit('error', 'too_big');
+                        this.emitOnError('too_big');
                         // FIXME: тоже не совсем вернно
                         // надо пропустить все до \0
                         // но вероятно соединение будет закрытор
@@ -205,7 +209,7 @@ class StompTok extends EventEmitter {
                         return (idx < data.length) ? 
                             this.parseState(rc) : rc;
                     } else {
-                        this.emit('error', 'inval_frame');
+                        this.emitOnError('inval_frame');
                         // FIXME: тут надо какбы переходить на новый фрейм
                         // текущий не валидный
                         return data.subarray(idx); 
@@ -223,7 +227,7 @@ class StompTok extends EventEmitter {
             let ch = data[idx++];
             if (isPrint(ch)) {
                 if (!this.stackBuf.push(ch)) {
-                    this.emit('error', 'too_big');
+                    this.emitOnError('too_big');
                     // FIXME: тоже не совсем вернно
                     // надо пропустить все до \0
                     // но вероятно соединение будет закрытор
@@ -233,18 +237,18 @@ class StompTok extends EventEmitter {
                 const rc = data.subarray(idx);
                 if (ch == NR) {
                     const headerVal = this.stackBuf.pop();
-                    this.emit('headerVal', headerVal);
+                    this.emitHeaderVal(headerVal);
                     this.parseState = this.hdrLineAlmostDone;
                     return (idx < data.length) ? 
                         this.parseState(rc) : rc;
                 } else if (ch == NL) {
                     const headerVal = this.stackBuf.pop();
-                    this.emit('headerVal', headerVal);
+                    this.emitHeaderVal(headerVal);
                     this.parseState = this.hdrLineDone;
                     return (idx < data.length) ? 
                         this.parseState(rc) : rc;
                 } else {
-                    this.emit('error', 'inval_frame');
+                    this.emitOnError('inval_frame');
                     // FIXME: тут надо какбы переходить на новый фрейм
                     // текущий не валидный
                     return data.subarray(idx); 
@@ -259,7 +263,7 @@ class StompTok extends EventEmitter {
         let idx = 0;
         let ch = data[idx++];
         if (ch != NL) {
-            this.emit('error', 'inval_reqline');
+            this.emitOnError('inval_reqline');
             // FIXME: тоже не совсем вернно
             // надо пропустить все до \0
             // но вероятно соединение будет закрытор
@@ -267,6 +271,7 @@ class StompTok extends EventEmitter {
         }
     
         this.parseState = this.doneState;
+        const rc = data.subarray(idx);
         return (idx < data.length) ? 
             this.parseState(rc) : rc;
     }
@@ -279,24 +284,74 @@ class StompTok extends EventEmitter {
             this.parseState = this.startState;
             this.emitOnFrameEnd();
         } else {
-            if (hook.content_left() > 0)
-            {
-                // выбираем как будем читать боди
-                state_ = &parser::body_read;
-    
-                if (curr < end)
-                    return body_read(hook, curr, end);
-            }
-            else
-            {
-                // выбираем как будем читать боди
-                state_ = &parser::body_read_no_length;
-    
-                if (curr < end)
-                    return body_read_no_length(hook, curr, end);
+            if (this.contentLeft > 0) {
+                this.parseState = this.bodyRead;
+            } else  {
+                this.parseState = this.bodyReadNoLength;
             }
         }
     
+        const rc = data.subarray(idx);
+        return (idx < data.length) ? 
+            this.parseState(rc) : rc;
+    }
+
+    bodyRead(data) {
+        let contentLength = this.contentLeft;
+        let idx = Math.min(data.length, contentLength);
+    
+        if (idx > 0) {
+            contentLength -= idx;
+            this.contentLeft = contentLength;
+            this.emitOnBody(data.subarray(0, idx));
+        }
+
+        if (contentLength == 0) {
+            this.parseState = this.frameEnd;
+        }
+
+        const rc = data.subarray(idx);
+        return (idx < data.length) ? 
+            this.parseState(rc) : rc;
+    }
+
+    bodyReadNoLength(data) {
+        let idx = 0;
+        do {
+            let ch = data[idx++];
+            if (ch == EOF) {
+                // если достигли конца переходим к новому фрейму
+                this.parseState = this.frameEnd;
+                // вернемся назад чтобы обработать каллбек
+                --idx;
+                break;
+            }
+        } while (idx < data.length);
+    
+        if (idx) {
+            this.emitOnBody(data.subarray(0, idx));
+        }
+    
+        const rc = data.subarray(idx);
+        return (idx < data.length) ? 
+            this.parseState(rc) : rc;
+    }
+
+    frameEnd(data) {
+        let idx = 0;
+        this.parseState = this.startState;
+        const ch = data[idx++];
+
+        if (ch != EOF) {
+            this.emitOnError('inval_frame');
+        }
+
+        // закончили
+        this.emitOnFrameEnd();
+    
+        const rc = data.subarray(idx);
+        return rc;
+        // FIXME: длинна рекурсии
         return (idx < data.length) ? 
             this.parseState(rc) : rc;
     }
@@ -306,15 +361,89 @@ class StompTok extends EventEmitter {
     }
 
     addListener(eventName, listener) {
+        switch (eventName) {
+            case 'method':
+                this.emitMethod = (method) => {
+                    this.emit('method', method);
+                };
+            break;
+            case 'headerKey':
+                this.emitHeaderKey = (value) => {
+                    this.emit('headerKey', value);
+                };
+            break;
+            case 'headerVal':
+                this.emitHeaderVal = (value) => {
+                    this.emit('headerVal', value);
+                };
+            break;
+            case 'frameStart':
+                this.emitFrameStart = () => {
+                    this.emit('frameStart');
+                };
+            break;
+            case 'frameEnd':
+                this.emitFrameEnd = () => {
+                    this.emit('frameEnd');
+                };
+            break;
+            case 'body':
+                this.emitOnBody = (value)=> {
+                    this.emit('body', value);
+                };
+            break;
+            case 'error':
+                this.emitOnError = (err)=> {
+                    this.emit('error', err);
+                };
+            break;
+        }        
         super.addListener(eventName, listener);
     }
     
     on(eventName, listener) {
+        switch (eventName) {
+            case 'method':
+                this.emitMethod = (method) => {
+                    this.emit('method', method);
+                };
+            break;
+            case 'headerKey':
+                this.emitHeaderKey = (value) => {
+                    this.emit('headerKey', value);
+                };
+            break;
+            case 'headerVal':
+                this.emitHeaderVal = (value) => {
+                    this.emit('headerVal', value);
+                };
+            break;
+            case 'frameStart':
+                this.emitFrameStart = () => {
+                    this.emit('frameStart');
+                };
+            break;
+            case 'frameEnd':
+                this.emitFrameEnd = () => {
+                    this.emit('frameEnd');
+                };
+            break;
+            case 'body':
+                this.emitOnBody = (value)=> {
+                    this.emit('body', value);
+                };
+            break;
+            case 'error':
+                this.emitOnError = (err)=> {
+                    this.emit('error', err);
+                };
+            break;
+        }
         super.on(eventName, listener);
     }
 
     once(eventName, listener) {
-        super.once(eventName, listener);
+        throw new Error('not possible')
     }
 
     emitMethod(value) {
@@ -337,6 +466,10 @@ class StompTok extends EventEmitter {
         this.onFrameEnd();
     }
 
+    emitOnError(err) {
+        this.onError(err);
+    }
+
     parse(data) {
         while (data.length) {
             // now data become subarray of original data
@@ -345,8 +478,8 @@ class StompTok extends EventEmitter {
     }
 }
 
-
 const stompTok = new StompTok();
+
 stompTok.on('method', (name) => {
     console.log('method', name.toString('ascii'));
 });
@@ -356,7 +489,11 @@ stompTok.on('headerKey', (value) => {
 stompTok.on('headerVal', (value) => {
     console.log('headerVal', value.toString('ascii'));
 });
+stompTok.on('body', (value) => {
+    console.log('headerVal', value.toString('ascii'));
+});
 stompTok.on('error', err => {
     console.log('error', err);
 });
-stompTok.parse(Buffer.from('CONNNECT\nmy:friend\nvery:funny\n\n'));
+
+stompTok.parse(Buffer.from('CONNNECT\nmy:friend\nvery:funny\n\nbad body\0'));
