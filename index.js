@@ -58,6 +58,17 @@ const isPrint = (ch) => {
     return (32 <= ch) && (ch <= 126);
 }
 
+// All commands and header names referenced in STOMP are case sensitive.
+// Header content-length
+// All frames MAY include a content-length header. 
+// This header is an octet count for the length of the message body. 
+// If a content-length header is included, this number of octets MUST be read, 
+// regardless of whether or not there are NULL octets in the body. 
+// The frame still needs to be terminated with a NULL octet.
+// If a frame body is present, the SEND, MESSAGE and ERROR frames 
+// SHOULD include a content-length header to ease frame parsing. 
+// If the frame body contains NULL octets, 
+// the frame MUST include a content-length header.
 const contentLengthHeader = 'content-length';
 const isHeaderContentLength = (value) => {
     return contentLengthHeader == value;
