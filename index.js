@@ -58,18 +58,9 @@ const isPrint = (ch) => {
     return (32 <= ch) && (ch <= 126);
 }
 
+const contentLengthHeader = 'content-length';
 const isHeaderContentLength = (value) => {
-    // 'content-length' size 14
-    if (value.length == 14) {
-        // fast detect
-        if (((value[0] == BC) || (value[0] == SC)) &&
-            ((value[8] == BL) || (value[8] == SL))) {
-            // full detect
-            const hdr = value.toString('ascii').toUpperCase();
-            return hdr == 'CONTENT-LENGTH';
-        }
-    }
-    return false;
+    return contentLengthHeader == value;
 }
 
 class StompTok extends EventEmitter {
@@ -138,12 +129,12 @@ class StompTok extends EventEmitter {
             } else {
                 if (ch == NL) {
                     const method = this.stackBuf.pop();
-                    this.emitMethod(method);
+                    this.emitMethod(method.toString('ascii'));
                     return this.callNextState(idx, 
                         data, this.hdrLineDone);
                 } else if (ch == NR) {
                     const method = this.stackBuf.pop();
-                    this.emitMethod(method);
+                    this.emitMethod(method.toString('ascii'));
                     return this.callNextState(idx, 
                         data, this.hdrLineAlmostDone);
                 } else {
@@ -203,7 +194,7 @@ class StompTok extends EventEmitter {
             let ch = data[idx++];
             if (ch == D2) {
                 const headerKey = this.stackBuf.pop();
-                this.emitHeaderKey(headerKey);
+                this.emitHeaderKey(headerKey.toString('ascii'));
                 return this.callNextState(idx, 
                     data, this.hdrLineVal);                
             } else {
@@ -251,12 +242,12 @@ class StompTok extends EventEmitter {
             } else {
                 if (ch == NR) {
                     const headerVal = this.stackBuf.pop();
-                    this.emitHeaderVal(headerVal);
+                    this.emitHeaderVal(headerVal.toString('ascii'));
                     return this.callNextState(idx, 
                         data, this.hdrLineAlmostDone);   
                 } else if (ch == NL) {
                     const headerVal = this.stackBuf.pop();
-                    this.emitHeaderVal(headerVal);
+                    this.emitHeaderVal(headerVal.toString('ascii'));
                     return this.callNextState(idx, 
                         data, this.hdrLineDone);   
                 } else {
@@ -504,13 +495,13 @@ stompTok.onFrameEnd = () => {
 }
 
 stompTok.on('method', (name) => {
-    console.log('method:', name.toString('ascii'));
+    console.log('method:', name);
 });
 stompTok.on('headerKey', (value) => {
-    console.log('headerKey:', value.toString('ascii'));
+    console.log('headerKey:', value);
 });
 stompTok.on('headerVal', (value) => {
-    console.log('headerVal:', value.toString('ascii'));
+    console.log('headerVal:', value);
 });
 stompTok.on('body', (value) => {
     console.log('body:', value.toString('ascii'));
