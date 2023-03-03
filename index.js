@@ -494,17 +494,17 @@ stompTok.onFrameEnd = () => {
     console.log('frame-end');
 }
 
-stompTok.on('method', (name) => {
-    console.log('method:', name);
+stompTok.on('method', (text) => {
+    console.log('method:', text);
 });
-stompTok.on('headerKey', (value) => {
-    console.log('headerKey:', value);
+stompTok.on('headerKey', (text) => {
+    console.log('headerKey:', text);
 });
-stompTok.on('headerVal', (value) => {
-    console.log('headerVal:', value);
+stompTok.on('headerVal', (text) => {
+    console.log('headerVal:', text);
 });
-stompTok.on('body', (value) => {
-    console.log('body:', value.toString('ascii'));
+stompTok.on('body', (buffer) => {
+    console.log('body:', buffer.toString('ascii'));
 });
 stompTok.on('error', err => {
     console.log('error:', err);
