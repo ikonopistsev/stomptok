@@ -519,4 +519,10 @@ stompTok.on('error', err => {
     console.log('error:', err);
 });
 
-stompTok.parse(Buffer.from('CONNNECT\nmy:friend\nvery:funny\ncontent-length:3\n\nbad body\0CONNNECT\nmy:friend\nvery:funny\n\nbad body\0'));
+const buffer = Buffer.from('CONNNECT\nmy:friend\nvery:funny\ncontent-length:3\n\nbad body\0CONNNECT\nmy:friend\nvery:funny\n\nbad body\0');
+stompTok.parse(buffer);
+
+const strBuf = buffer.toString('ascii');
+for (let i = 0; i < strBuf.length; ++i) {
+    stompTok.parse(Buffer.from(strBuf[i]));
+}
