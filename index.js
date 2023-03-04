@@ -508,39 +508,66 @@ class StompTok extends EventEmitter {
             // now data become subarray of original data
             data = this.parseState(data);
         }
+        return { length: 0 };
     }
 }
 
 const stompTok = new StompTok();
 
 stompTok.onFrameStart = () => {
-    console.log('frame-start');
+    //console.log('frame-start');
 }
 
 stompTok.onFrameEnd = () => {
-    console.log('frame-end');
+    //console.log('frame-end');
 }
 
+let frameCount = 0;
 stompTok.on('method', (text) => {
-    console.log('method:', text);
+    //console.log('method:', text);
+    ++frameCount;
 });
 stompTok.on('headerKey', (text) => {
-    console.log('headerKey:', text);
+    //console.log('headerKey:', text);
 });
 stompTok.on('headerVal', (text) => {
-    console.log('headerVal:', text);
+    //console.log('headerVal:', text);
 });
 stompTok.on('body', (buffer) => {
-    console.log('body:', buffer.toString('ascii'));
+    //console.log('body:', buffer.toString('ascii'));
 });
 stompTok.on('error', err => {
     console.log('error:', err);
 });
 
-const buffer = Buffer.from('CONNNECT\nmy:friend\nvery:funny\ncontent-length:3\n\nbad body\0CONNNECT\nmy:friend\nvery:funny\n\nbad body\0');
-stompTok.parse(buffer);
+const buffer = Buffer.concat(
+    [
+        Buffer.from("CONNECTED\r\nversion:1.2\r\nsession:STOMP-PARSER-TEST\r\nserver:stomp-parser/1.0.0\r\n\r\n\0"),
+        Buffer.from("MESSAGE\nid:0\ndestination:/queue/foo\nack:client\n\n\0"),
+        Buffer.from("MESSAGE\r\nid:0\r\n\r\n\0"),
+        Buffer.from("MESSAGE\r\nid:0\r\n\r\n\0"),
+        Buffer.from("MESSAGE\nsubscription:0\nmessage-id:007\ndestination:/queue/a\ncontent-length:13\ncontent-type:text/plain\nmessage-error:false\n\nhello queue a\0"),
+        Buffer.from("MESSAGE\r\nsubscription:0\r\nmessage-id:007\r\ndestination:/queue/a\r\ncontent-type:application/json\r\nmessage-no-content-length:true\r\n\r\n[1,2,3,4,5,6,7]\0\n\n\n\n\0"),
+        Buffer.from("MESSAGE\r\nsubscription:0\r\nmessage-id:007\r\ndestination:/queue/a\r\ncontent-length:13\r\ncontent-type:text/plain\r\nmessage-error:false\r\n\r\nhello queue a\0"),
+        Buffer.from("MESSAGE\r\nsubscription:0\r\nmessage-id:007\r\ndestination:/queue/a\r\ncontent-length:13\r\nmessage-error:false\r\n\r\nhello queue a\0"),
+        Buffer.from("MESSAGE\r\nsubscription:0\r\nmessage-id:007\r\ndestination:/queue/a\r\n\r\nhello queue a\0"),
+        Buffer.from("MESSAGE\r\nreceipt:77\r\n\r\n\0")
+    ]);
 
-const strBuf = buffer.toString('ascii');
-for (let i = 0; i < strBuf.length; ++i) {
-    stompTok.parse(Buffer.from(strBuf[i]));
+const count = 1000000;
+let i = 0;
+for ( ; i < count; ++i)
+{
+    let pos = 0;
+    let data = buffer.subarray(0);
+    while (data.length) {
+        data = stompTok.parse(data);
+    }
 }
+
+console.log(frameCount);
+
+// const strBuf = buffer.toString('ascii');
+// for (let i = 0; i < strBuf.length; ++i) {
+//     stompTok.parse(Buffer.from(strBuf[i]));
+// }
