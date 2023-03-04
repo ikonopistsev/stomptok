@@ -137,7 +137,7 @@ class StompTok extends EventEmitter {
                 data, this.methodState);
         } while (idx < length);
         // EOF data
-        return { length: 0 };
+        return data.subarray(idx);
     }
 
     methodState(data) {
@@ -168,7 +168,7 @@ class StompTok extends EventEmitter {
             }
         } while (idx < length)
         // EOF data
-        return { length: 0 };
+        return data.subarray(idx);
     }
 
     hdrLineAlmostDone(data) {
@@ -247,7 +247,7 @@ class StompTok extends EventEmitter {
             }
         } while (idx < length);
         // EOF data
-        return { length: 0 };
+        return data.subarray(idx);
     }
 
     hdrLineVal(data) {
@@ -283,7 +283,7 @@ class StompTok extends EventEmitter {
             }
         } while (idx < length);
         // EOF data
-        return { length: 0 };
+        return data.subarray(idx);
     }
 
     almostDoneState(data) {
@@ -508,7 +508,7 @@ class StompTok extends EventEmitter {
             // now data become subarray of original data
             data = this.parseState(data);
         }
-        return { length: 0 };
+        return data;
     }
 }
 
@@ -554,7 +554,7 @@ const buffer = Buffer.concat(
         Buffer.from("MESSAGE\r\nreceipt:77\r\n\r\n\0")
     ]);
 
-const count = 1000000;
+const count = 25000;
 let i = 0;
 for ( ; i < count; ++i)
 {
