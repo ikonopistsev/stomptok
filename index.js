@@ -1,49 +1,17 @@
 const EventEmitter = require('node:events');
+// When you use require, it doesn't look at the global modules folder. 
+// Fix it by writing this in the (bash) terminal: 
+// # export NODE_PATH=$(npm root -g)
+const StompTalk = require('node-stomptalk');
 
-class ParserStack {
-    constructor(size) {
-        // idx указывает на следующий свободный элемент
-        this.idx = 0;
-        this.arr = Buffer.alloc(size);
-    }
-
-    push(byteVal) {
-        const { idx, arr } = this;
-        const { byteLength } = arr;
-        if (idx < byteLength) {
-            this.arr[this.idx++] = byteVal;
-        }
-        return idx != this.idx;
-    }
-
-    clear() {
-        this.idx = 0;
-    }
-
-    pop() {
-        const { idx, arr } = this;
-        this.clear();
-        return arr.subarray(0, idx);
-    }
-
-    get size() {
-        return this.idx;
-    }
-
-    get capacity() {
-        const { idx, arr } = this;
-        return arr.byteLength - idx;
-    }
-}
-
-const NL = 10; // \n
-const NR = 13; // \r
 const EOF = 0; // \0
-const D2 = 58; // :
-const BC = 67; // C
-const BL = 76; // L
-const SC = 99; // c
-const SL = 108;// l
+const NL = 10; // \n
+const NR = 13; // \n
+const NLT = '\n';
+const NRT = '\r\n';
+const NL2T = '\n\n';
+const NRL2T = '\r\n\r\n';
+const D2T = ':';
 
 // we don't konw is it frame?
 const errInvalReq = { code: 400, message: 'inval_req' };
@@ -51,17 +19,16 @@ const errInvalReq = { code: 400, message: 'inval_req' };
 const errInvalFrame = { code: 400, message: 'inval_frame' };
 // part of frame is too big
 const errTooBig = { code: 413, message: 'too_big' };
+// error in client callback
 const errGeneric = { code: 500, message: 'genr_err' };
 
 const isAsciiUpper = (ch) => {
     // A <= ch <= Z
     return (65 <= ch) && (ch <= 90);
 }
-
 const isPrintNoSpace = (ch) => {
     return (32 < ch) && (ch <= 126);
 }
-
 const isPrint = (ch) => {
     return (32 <= ch) && (ch <= 126);
 }
@@ -82,28 +49,24 @@ const isHeaderContentLength = (value) => {
     return contentLengthHeader == value;
 }
 
+//  stompTok
+//      .on('frameStart')           ->  begin frame
+//      .on('method', name)         ->  receive method
+//      .on('headerKey', value)     ->  receive header key
+//      .on('headerVal', value)     ->  receive header val
+//      .on('frameEnd')             ->  end frame
+//      .on('error', err)           ->  parse error
+//  +   abort(err)                  ->  abort parse
+//  +   parse(Buffer.from(somedata))
+
+
 class StompTok extends EventEmitter {
     constructor() {
         super();
-        this.stackBuf = new ParserStack(2048);
-        // state machine
         this.parseState = this.startState;
-        
-        // header 'content-length' data
         this.contentLength = 0;
-        // how many content left
         this.contentLeft = 0;
-        // is previous header key was content-length?
-        this.isContentLength = false;
-
-        const e = () => {};
-        this.onFrameStart = e;
-        this.onMethod = e;
-        this.onHeaderKey = e;
-        this.onHeaderVal = e;
-        this.onBody = e;
-        this.onFrameEnd = e;
-        this.onError = e;
+        this.prevData = null;
     }
 
     callNextState(idx, data, nextState) {
@@ -114,460 +77,226 @@ class StompTok extends EventEmitter {
     }
 
     startState(data) {
-        let idx = 0;
         const { length } = data;
+        // find begin of frame
+        // skip wrong data or heart-beat
+        let idx = 0;
         do {
-            let ch = data[idx++];
-            if ((ch == NL) || (ch == NR) || (ch == EOF)) {
-                continue;
+            const ch = data[idx];
+            if (!((ch == NL) || (ch == NR) || (ch == EOF))) {
+                break;
             }
+        } while (++idx < length);
+        
+        this.emit('frameStart');
+        this.contentLength = 0;
+        this.contentLeft = 0;
 
-            if (!isAsciiUpper(ch)) {
-                this.emitOnError(errInvalReq);
+        return this.callNextState(idx, 
+            data, this.frameState);
+    }
+
+    frameState(data) {
+        // try to find frame(text-part)[\n\n]body(biary-part) separator
+        let sep = NL2T;
+        let idx = data.indexOf(sep);
+        if (idx != -1) {
+            sep = NRL2T;
+            idx = data.indexOf(sep);
+        }
+
+        if (idx != -1) {
+            const textPart = data.subarray(0, idx).toString('ascii');
+            let tokenArray = textPart.split(NLT);
+            const { length } = tokenArray;
+            // minimum 1 elem
+            if (length) {
+                const methodName = tokenArray[0];
+                this.emit('method', methodName);
+                for (let i = 1; i < length; ++i) {
+                    const kvArr = tokenArray[i].split(D2T);
+                    if (kvArr.length == 2) {
+                        const headerKey = kvArr[0];
+                        const headerVal = kvArr[1];
+                        if ((this.contentLength == 0) && isHeaderContentLength(headerKey)) {
+                            this.contentLength = this.contentLeft = parseInt(headerVal);            
+                        }
+                        this.emit('headerKey', headerKey);
+                        this.emit('headerVal', headerVal);
+                    } else {
+                        this.emit('error', errInvalFrame);
+                        return data.subarray(idx);
+                    }
+                }
+            } else {
+                this.emit('error', errInvalReq);
                 return data.subarray(idx);
             }
 
-            this.emitFrameStart();
-            this.stackBuf.clear();
-            this.stackBuf.push(ch);
-            this.contentLength = 0;
-            this.contentLeft = 0;
-            this.isContentLength = false;
+            idx += sep.length;
             return this.callNextState(idx, 
-                data, this.methodState);
-        } while (idx < length);
-        // EOF data
-        return data.subarray(idx);
-    }
-
-    methodState(data) {
-        let idx = 0;
-        const { length } = data;
-        do {
-            let ch = data[idx++];
-            if (isAsciiUpper(ch)) {
-                if (!this.stackBuf.push(ch)) {
-                    this.emitOnError(errTooBig);
-                    return data.subarray(idx); 
-                }
-            } else {
-                if (ch == NL) {
-                    const method = this.stackBuf.pop();
-                    this.emitMethod(method.toString('ascii'));
-                    return this.callNextState(idx, 
-                        data, this.hdrLineDone);
-                } else if (ch == NR) {
-                    const method = this.stackBuf.pop();
-                    this.emitMethod(method.toString('ascii'));
-                    return this.callNextState(idx, 
-                        data, this.hdrLineAlmostDone);
-                } else {
-                    this.emitOnError(errInvalReq);
-                    return data.subarray(idx); 
-                }
-            }
-        } while (idx < length)
-        // EOF data
-        return data.subarray(idx);
-    }
-
-    hdrLineAlmostDone(data) {
-        let idx = 0;
-        const ch = data[idx++];
-        if (ch != NL) {
-            this.emitOnError(errInvalFrame);
-            return data.subarray(idx); 
-        }
-
-        return this.callNextState(idx, 
-            data, this.hdrLineDone);
-    }
-
-    hdrLineDone(data) {
-        let idx = 0;
-        const { length } = data;
-        const ch = data[idx++];
-        if (ch == NR) {
-            this.parseState = this.almostDoneState;
-            const rc = data.subarray(idx);
-            return (idx < length) ? 
-                this.parseState(rc) : rc;
-        } else if (ch == NL) {
-            return this.callNextState(idx, 
-                data, this.doneState);
-        }
-
-        if (!isPrintNoSpace(ch)) {
-            this.emitOnError(errInvalFrame);
-            return data.subarray(idx); 
-        }
-
-        if (!this.stackBuf.push(ch)) {
-            this.emitOnError(errTooBig);
-            return data.subarray(idx); 
-        }
-
-        return this.callNextState(idx, 
-            data, this.hdrLineKey);
-    }
-
-    hdrLineKey(data) {
-        let idx = 0;
-        const { length } = data;
-        do {
-            let ch = data[idx++];
-            if (ch == D2) {
-                const headerKey = this.stackBuf.pop();
-                this.emitHeaderKey(headerKey.toString('ascii'));
-                return this.callNextState(idx, 
-                    data, this.hdrLineVal);                
-            } else {
-                if (isPrintNoSpace(ch)) {
-                    if (!this.stackBuf.push(ch)) {
-                        this.emitOnError(errTooBig);
-                        // FIXME: тоже не совсем вернно
-                        // надо пропустить все до \0
-                        // но вероятно соединение будет закрытор
-                        return data.subarray(idx); 
-                    }
-                } else {
-                    if (ch == NL) {
-                        return this.callNextState(idx, 
-                            data, this.hdrLineDone);                          
-                    } else if (ch == NR) {
-                        return this.callNextState(idx, 
-                            data, this.hdrLineAlmostDone);                          
-                    } else {
-                        this.emitOnError(errInvalFrame);
-                        // FIXME: тут надо какбы переходить на новый фрейм
-                        // текущий не валидный
-                        return data.subarray(idx); 
-                    }
-                }
-            }
-        } while (idx < length);
-        // EOF data
-        return data.subarray(idx);
-    }
-
-    hdrLineVal(data) {
-        let idx = 0;
-        const { length } = data;
-        do {
-            let ch = data[idx++];
-            if (isPrint(ch)) {
-                if (!this.stackBuf.push(ch)) {
-                    this.emitOnError(errTooBig);
-                    // FIXME: тоже не совсем вернно
-                    // надо пропустить все до \0
-                    // но вероятно соединение будет закрытор
-                    return data.subarray(idx); 
-                }
-            } else {
-                if (ch == NR) {
-                    const headerVal = this.stackBuf.pop();
-                    this.emitHeaderVal(headerVal.toString('ascii'));
-                    return this.callNextState(idx, 
-                        data, this.hdrLineAlmostDone);   
-                } else if (ch == NL) {
-                    const headerVal = this.stackBuf.pop();
-                    this.emitHeaderVal(headerVal.toString('ascii'));
-                    return this.callNextState(idx, 
-                        data, this.hdrLineDone);   
-                } else {
-                    this.emitOnError(errInvalFrame);
-                    // FIXME: тут надо какбы переходить на новый фрейм
-                    // текущий не валидный
-                    return data.subarray(idx); 
-                }
-            }
-        } while (idx < length);
-        // EOF data
-        return data.subarray(idx);
-    }
-
-    almostDoneState(data) {
-        let idx = 0;
-        let ch = data[idx++];
-        if (ch != NL) {
-            this.emitOnError(errInvalFrame);
-            // FIXME: тоже не совсем вернно
-            // надо пропустить все до \0
-            // но вероятно соединение будет закрытор
-            return data.subarray(idx); 
-        }
-    
-        return this.callNextState(idx, 
-            data, this.doneState);
-    }
-
-    doneState(data) {
-        let idx = 0;
-        let ch = data[idx];
-        let { parseState } = this;
-        if (ch == EOF) {
-            ++idx;
-            parseState = this.startState;
-            this.emitOnFrameEnd();
-        } else {
-            parseState = (this.contentLeft > 0) ? this.bodyRead : 
-                this.bodyReadNoLength
-        }
-    
-        return this.callNextState(idx, 
-            data, parseState);
-    }
-
-    bodyRead(data) {
-        let contentLength = this.contentLeft;
-        let idx = Math.min(data.length, contentLength);
-    
-        if (idx > 0) {
-            contentLength -= idx;
-            this.contentLeft = contentLength;
-            this.emitOnBody(data.subarray(0, idx));
-        }
-
-        let { parseState } = this;
-        if (contentLength == 0) {
-            parseState = this.frameEnd;
-        }
-
-        return this.callNextState(idx, 
-            data, parseState);
-    }
-
-    bodyReadNoLength(data) {
-        let idx = 0;
-        const { length } = data;
-        let { parseState } = this;
-        do {
-            let ch = data[idx++];
-            if (ch == EOF) {
-                // если достигли конца переходим к новому фрейму
-                parseState = this.frameEnd;
-                // вернемся назад чтобы обработать каллбек
-                --idx;
-                break;
-            }
-        } while (idx < length);
-    
-        if (idx) {
-            this.emitOnBody(data.subarray(0, idx));
-        }
-    
-        return this.callNextState(idx, 
-            data, parseState);
-    }
-
-    frameEnd(data) {
-        let idx = 0;
-        this.parseState = this.startState;
-        const ch = data[idx++];
-        if (ch != EOF) {
-            this.emitOnError(errInvalFrame);
-        }
-
-        // закончили
-        this.emitOnFrameEnd();
-    
-        const rc = data.subarray(idx);
-        return rc;
-        // FIXME: длинна рекурсии
-        return this.callNextState(idx, 
-            data, this.startState);        
-    }
-
-    emitFrameStart() {
-        this.onFrameStart();
-    }
-
-    addListener(eventName, listener) {
-        switch (eventName) {
-            case 'method':
-                this.onMethod = (method) => {
-                    this.emit('method', method);
-                };
-            break;
-            case 'headerKey':
-                this.onHeaderKey = (value) => {
-                    this.emit('headerKey', value);
-                };
-            break;
-            case 'headerVal':
-                this.onHeaderVal = (value) => {
-                    this.emit('headerVal', value);
-                };
-            break;
-            case 'frameStart':
-                this.onFrameStart = () => {
-                    this.emit('frameStart');
-                };
-            break;
-            case 'frameEnd':
-                this.onFrameEnd = () => {
-                    this.emit('frameEnd');
-                };
-            break;
-            case 'body':
-                this.onBody = (value) => {
-                    this.emit('body', value);
-                };
-            break;
-            case 'error':
-                this.onError = (err) => {
-                    this.emit('error', err);
-                };
-            break;
-        }        
-        super.addListener(eventName, listener);
-    }
-    
-    on(eventName, listener) {
-        switch (eventName) {
-            case 'method':
-                this.onMethod = (method) => {
-                    this.emit('method', method);
-                };
-            break;
-            case 'headerKey':
-                this.onHeaderKey = (value) => {
-                    this.emit('headerKey', value);
-                };
-            break;
-            case 'headerVal':
-                this.onHeaderVal = (value) => {
-                    this.emit('headerVal', value);
-                };
-            break;
-            case 'frameStart':
-                this.onFrameStart = () => {
-                    this.emit('frameStart');
-                };
-            break;
-            case 'frameEnd':
-                this.onFrameEnd = () => {
-                    this.emit('frameEnd');
-                };
-            break;
-            case 'body':
-                this.onBody = (value) => {
-                    this.emit('body', value);
-                };
-            break;
-            case 'error':
-                this.onError = (err) => {
-                    this.emit('error', err);
-                };
-            break;
-        }   
-        super.on(eventName, listener);
-    }
-
-    once(eventName, listener) {
-        throw new Error('not possible')
-    }
-
-    emitMethod(value) {
-        this.onMethod(value);
-    }
-
-    emitHeaderKey(value) {
-        // try find content-length
-        if ((this.contentLength == 0) && isHeaderContentLength(value)) {
-            this.isContentLength = true;
-        }
-
-        this.onHeaderKey(value)
-    }
-
-    emitHeaderVal(value) {
-        // if current header is content-legth
-        if (this.isContentLength) {                        
-            this.isContentLength = false;
-            this.contentLength = this.contentLeft = parseInt(value);            
-        }
-        
-        this.onHeaderVal(value)
-    }
-
-    emitOnBody(value) {
-        this.onBody(value);
-    }
-
-    emitOnFrameEnd() {
-        this.onFrameEnd();
-    }
-
-    emitOnError(err) {
-        this.onError(err);
-    }
-
-    parse(data) {
-        while (data.length) {
-            // now data become subarray of original data
-            data = this.parseState(data);
+                data, this.endOrBodyState);
         }
         return data;
     }
-}
 
-const stompTok = new StompTok();
+    endOrBodyState(data) {
+        if (data.length) {
+            // we know body length
+            if (this.contentLength) {
+                return this.callNextState(0, 
+                    data, this.bodyState);
+            }
 
-stompTok.onFrameStart = () => {
-    //console.log('frame-start');
-}
+            // detect frame end, or body with no length
+            let idx = 0;
+            const { length } = data;
+            do {
+                let ch = data[idx++];
+                if (EOF == ch) {
+                    if (idx > 1) {
+                        this.emit('body', data.subarray(0, --idx));
+                    }
+                    this.emit('frameEnd');
+                    return this.callNextState(idx, 
+                        data, this.startState);
+                }
+            } while (idx < length);
+            
+            return data.subarray(idx);
+        }
 
-stompTok.onFrameEnd = () => {
-    //console.log('frame-end');
-}
+        return data;
+    }
 
-let frameCount = 0;
-stompTok.on('method', (text) => {
-    //console.log('method:', text);
-    ++frameCount;
-});
-stompTok.on('headerKey', (text) => {
-    //console.log('headerKey:', text);
-});
-stompTok.on('headerVal', (text) => {
-    //console.log('headerVal:', text);
-});
-stompTok.on('body', (buffer) => {
-    //console.log('body:', buffer.toString('ascii'));
-});
-stompTok.on('error', err => {
-    console.log('error:', err);
-});
+    bodyState(data) {
+        let { contentLeft } = this;
+        let idx = Math.min(data.length, contentLeft);
+    
+        if (idx > 0) {
+            contentLeft -= idx;
+            this.contentLeft = contentLeft;
+            this.emit('body', data.subarray(0, idx));
+        }
 
-const buffer = Buffer.concat(
-    [
-        Buffer.from("CONNECTED\r\nversion:1.2\r\nsession:STOMP-PARSER-TEST\r\nserver:stomp-parser/1.0.0\r\n\r\n\0"),
-        Buffer.from("MESSAGE\nid:0\ndestination:/queue/foo\nack:client\n\n\0"),
-        Buffer.from("MESSAGE\r\nid:0\r\n\r\n\0"),
-        Buffer.from("MESSAGE\r\nid:0\r\n\r\n\0"),
-        Buffer.from("MESSAGE\nsubscription:0\nmessage-id:007\ndestination:/queue/a\ncontent-length:13\ncontent-type:text/plain\nmessage-error:false\n\nhello queue a\0"),
-        Buffer.from("MESSAGE\r\nsubscription:0\r\nmessage-id:007\r\ndestination:/queue/a\r\ncontent-type:application/json\r\nmessage-no-content-length:true\r\n\r\n[1,2,3,4,5,6,7]\0\n\n\n\n\0"),
-        Buffer.from("MESSAGE\r\nsubscription:0\r\nmessage-id:007\r\ndestination:/queue/a\r\ncontent-length:13\r\ncontent-type:text/plain\r\nmessage-error:false\r\n\r\nhello queue a\0"),
-        Buffer.from("MESSAGE\r\nsubscription:0\r\nmessage-id:007\r\ndestination:/queue/a\r\ncontent-length:13\r\nmessage-error:false\r\n\r\nhello queue a\0"),
-        Buffer.from("MESSAGE\r\nsubscription:0\r\nmessage-id:007\r\ndestination:/queue/a\r\n\r\nhello queue a\0"),
-        Buffer.from("MESSAGE\r\nreceipt:77\r\n\r\n\0")
-    ]);
+        // определяем нужно ли менять состояние
+        if (contentLeft == 0) {
+            return this.callNextState(idx, 
+                data, this.endState);
+        }
 
-const count = 25000;
-let i = 0;
-for ( ; i < count; ++i)
-{
-    let pos = 0;
-    let data = buffer.subarray(0);
-    while (data.length) {
-        data = stompTok.parse(data);
+        return this.callNextState(idx, 
+            data, this.bodyState);
+    }
+
+    endState(data) {
+        let idx = 0;
+        if (EOF == data[idx]) {
+            ++idx;
+            this.emit('frameEnd');
+        } else {
+            this.emit('error', errInvalFrame);
+        }
+
+        return this.callNextState(idx, 
+            data, this.startState);
+    }
+
+    concat(data) {  
+        if (this.prevData) {
+            // если хранили остаток присоединяем его
+            const rc = Buffer.concat([this.prevData, data]);
+            this.prevData = null;
+            return rc;
+        }
+        return data;
+    }
+
+    store(data) {
+        const { length } = data;
+        if (length > 500) {
+            // too big
+        }
+        this.prevData = data;
+    }
+
+    parse(input) {
+        let data = this.concat(input);
+        // prev buffer length
+        const { length } = data;
+        while (data.length) {
+            // now data become subarray of original data
+            data = this.parseState(data);
+            // not parsed if length not changed
+            if (length == data.length) {
+                this.store(data);
+                return false;
+            }
+        }
+        return true;
     }
 }
 
-console.log(frameCount);
 
-// const strBuf = buffer.toString('ascii');
-// for (let i = 0; i < strBuf.length; ++i) {
-//     stompTok.parse(Buffer.from(strBuf[i]));
-// }
+
+const noNR = Buffer.concat([
+    Buffer.from("CONNECTED\nversion:1.2\nsession:STOMP-PARSER-TEST\nserver:stomp-parser/1.0.0\n\n\0"),
+    Buffer.from("MESSAGE\nid:0\ndestination:/queue/foo\nack:client\n\n\0"),
+    Buffer.from("MESSAGE\nid:0\n\n\0"),
+    Buffer.from("MESSAGE\nid:0\n\n\0"),
+    Buffer.from("MESSAGE\nsubscription:0\nmessage-id:007\ndestination:/queue/a\ncontent-length:13\ncontent-type:text/plain\nmessage-error:false\n\nhello queue a\0"),
+    Buffer.from("MESSAGE\nsubscription:0\nmessage-id:007\ndestination:/queue/a\ncontent-type:application/json\nmessage-no-content-length:true\n\n[1,2,3,4,5,6,7]\0\n\n\n\n\0"),
+    Buffer.from("MESSAGE\nsubscription:0\nmessage-id:007\ndestination:/queue/a\ncontent-length:13\ncontent-type:text/plain\nmessage-error:false\n\nhello queue a\0"),
+    Buffer.from("MESSAGE\nsubscription:0\nmessage-id:007\ndestination:/queue/a\ncontent-length:13\nmessage-error:false\n\nhello queue a\0"),
+    Buffer.from("MESSAGE\nsubscription:0\nmessage-id:007\ndestination:/queue/a\n\nhello queue a\0"),
+    Buffer.from("MESSAGE\nreceipt:77\n\n\0")
+]);
+   
+let frameCount = 0;
+const stompTok = new StompTalk();
+stompTok.on('frameStart', () => {
+    ++frameCount;
+});
+stompTok.parse(noNR);
+
+let simpleFrameCount = 0;
+const simpleStompTok = new StompTok();
+stompTok.on('frameStart', () => {
+    ++simpleFrameCount;
+});
+
+const s = new Date().getTime();
+const count = 25000;
+//const count = 0;
+let i = 0;
+for ( ; i < count; ++i)
+{
+    //simpleStompTok.parse(noNR);
+    stompTok.parse(noNR);
+}
+
+console.log(frameCount, (new Date().getTime() - s) / 1000.0);
+
+stompTok.on('frameStart', () => {
+    console.log('frameStart');
+});
+stompTok.on('method', name => {
+    console.log('method:', name);
+});
+stompTok.on('headerKey', headerKey => {
+    console.log('headerKey:', headerKey);
+});
+stompTok.on('headerVal', headerVal => {
+    console.log('headerVal:', headerVal);
+});
+stompTok.on('body', (body, contentLength, contentLeft) => {
+    console.log('body:', body.toString('ascii'), contentLength, contentLeft);
+});
+stompTok.on('frameEnd', () => {
+    console.log('frameEnd');
+});
+
+const strBuf = noNR.toString('ascii');
+for (let i = 0; i < strBuf.length; ++i) {
+     stompTok.parse(Buffer.from(strBuf[i]));
+}
