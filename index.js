@@ -97,14 +97,15 @@ class StompTok extends EventEmitter {
     }
 
     frameState(data) {
-        // try to find frame(text-part)[\n\n]body(biary-part) separator
+        // try to find frame(text-part)[\n\n]body(binary-part)[separator]
         let sep = NL2T;
         let idx = data.indexOf(sep);
-        if (idx != -1) {
+        if (idx == -1) {
+            // try to find frame(text-part)[\r\n\r\n]body(binary-part)[separator]
             sep = NRL2T;
             idx = data.indexOf(sep);
         }
-
+        // frame found
         if (idx != -1) {
             const textPart = data.subarray(0, idx).toString('ascii');
             let tokenArray = textPart.split(NLT);
