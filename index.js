@@ -2,7 +2,6 @@ const EventEmitter = require('node:events');
 // When you use require, it doesn't look at the global modules folder. 
 // Fix it by writing this in the (bash) terminal: 
 // # export NODE_PATH=$(npm root -g)
-const StompTalk = require('node-stomptalk');
 
 const EOF = 0; // \0
 const NL = 10; // \n
@@ -98,17 +97,19 @@ class StompTok extends EventEmitter {
 
     frameState(data) {
         // try to find frame(text-part)[\n\n]body(binary-part)[separator]
-        let sep = NL2T;
-        let idx = data.indexOf(sep);
+        let bodySep = NL2T;
+        let headerSep = NLT;
+        let idx = data.indexOf(bodySep);
         if (idx == -1) {
             // try to find frame(text-part)[\r\n\r\n]body(binary-part)[separator]
-            sep = NRL2T;
-            idx = data.indexOf(sep);
+            bodySep = NRL2T;
+            headerSep = NRT;
+            idx = data.indexOf(bodySep);
         }
         // frame found
         if (idx != -1) {
             const textPart = data.subarray(0, idx).toString('ascii');
-            let tokenArray = textPart.split(NLT);
+            let tokenArray = textPart.split(headerSep);
             const { length } = tokenArray;
             // minimum 1 elem
             if (length) {
@@ -134,7 +135,7 @@ class StompTok extends EventEmitter {
                 return data.subarray(idx);
             }
 
-            idx += sep.length;
+            idx += bodySep.length;
             return this.callNextState(idx, 
                 data, this.endOrBodyState);
         }
@@ -236,68 +237,4 @@ class StompTok extends EventEmitter {
         }
         return true;
     }
-}
-
-
-
-const noNR = Buffer.concat([
-    Buffer.from("CONNECTED\nversion:1.2\nsession:STOMP-PARSER-TEST\nserver:stomp-parser/1.0.0\n\n\0"),
-    Buffer.from("MESSAGE\nid:0\ndestination:/queue/foo\nack:client\n\n\0"),
-    Buffer.from("MESSAGE\nid:0\n\n\0"),
-    Buffer.from("MESSAGE\nid:0\n\n\0"),
-    Buffer.from("MESSAGE\nsubscription:0\nmessage-id:007\ndestination:/queue/a\ncontent-length:13\ncontent-type:text/plain\nmessage-error:false\n\nhello queue a\0"),
-    Buffer.from("MESSAGE\nsubscription:0\nmessage-id:007\ndestination:/queue/a\ncontent-type:application/json\nmessage-no-content-length:true\n\n[1,2,3,4,5,6,7]\0\n\n\n\n\0"),
-    Buffer.from("MESSAGE\nsubscription:0\nmessage-id:007\ndestination:/queue/a\ncontent-length:13\ncontent-type:text/plain\nmessage-error:false\n\nhello queue a\0"),
-    Buffer.from("MESSAGE\nsubscription:0\nmessage-id:007\ndestination:/queue/a\ncontent-length:13\nmessage-error:false\n\nhello queue a\0"),
-    Buffer.from("MESSAGE\nsubscription:0\nmessage-id:007\ndestination:/queue/a\n\nhello queue a\0"),
-    Buffer.from("MESSAGE\nreceipt:77\n\n\0")
-]);
-   
-let frameCount = 0;
-const stompTok = new StompTalk();
-stompTok.on('frameStart', () => {
-    ++frameCount;
-});
-stompTok.parse(noNR);
-
-let simpleFrameCount = 0;
-const simpleStompTok = new StompTok();
-stompTok.on('frameStart', () => {
-    ++simpleFrameCount;
-});
-
-const s = new Date().getTime();
-const count = 25000;
-//const count = 0;
-let i = 0;
-for ( ; i < count; ++i)
-{
-    //simpleStompTok.parse(noNR);
-    stompTok.parse(noNR);
-}
-
-console.log(frameCount, (new Date().getTime() - s) / 1000.0);
-
-stompTok.on('frameStart', () => {
-    console.log('frameStart');
-});
-stompTok.on('method', name => {
-    console.log('method:', name);
-});
-stompTok.on('headerKey', headerKey => {
-    console.log('headerKey:', headerKey);
-});
-stompTok.on('headerVal', headerVal => {
-    console.log('headerVal:', headerVal);
-});
-stompTok.on('body', (body, contentLength, contentLeft) => {
-    console.log('body:', body.toString('ascii'), contentLength, contentLeft);
-});
-stompTok.on('frameEnd', () => {
-    console.log('frameEnd');
-});
-
-const strBuf = noNR.toString('ascii');
-for (let i = 0; i < strBuf.length; ++i) {
-     stompTok.parse(Buffer.from(strBuf[i]));
 }
