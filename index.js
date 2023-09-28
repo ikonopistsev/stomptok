@@ -85,16 +85,17 @@ class StompTok extends EventEmitter {
         do {
             const ch = data[idx];
             if (!((ch == NL) || (ch == NR) || (ch == EOF))) {
-                break;
+
+                this.emit('frameStart');
+                this.contentLength = 0;
+                this.contentLeft = 0;
+        
+                return this.callNextState(idx, 
+                    data, this.frameState);
             }
         } while (++idx < length);
         
-        this.emit('frameStart');
-        this.contentLength = 0;
-        this.contentLeft = 0;
-
-        return this.callNextState(idx, 
-            data, this.frameState);
+        return data.subarray(idx);
     }
 
     frameState(data) {
@@ -134,6 +135,7 @@ class StompTok extends EventEmitter {
             headerSep = NRT;
             bodySep = NRL2T;
         }
+        
         // frame found
         if (idx != -1) {
             const textPart = data.subarray(0, idx).toString('ascii');
