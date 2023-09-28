@@ -79,23 +79,26 @@ class StompTok extends EventEmitter {
 
     startState(data) {
         const { length } = data;
-        // find begin of frame
-        // skip wrong data or heart-beat
-        let idx = 0;
-        do {
-            const ch = data[idx];
-            if (!((ch == NL) || (ch == NR) || (ch == EOF))) {
+        if (length) {
+            // find begin of frame
+            // skip wrong data or heart-beat
+            let idx = 0;
+            do {
+                const ch = data[idx];
+                if (!((ch == NL) || (ch == NR) || (ch == EOF))) {
 
-                this.emit('frameStart');
-                this.contentLength = 0;
-                this.contentLeft = 0;
-        
-                return this.callNextState(idx, 
-                    data, this.frameState);
-            }
-        } while (++idx < length);
-        
-        return data.subarray(idx);
+                    this.emit('frameStart');
+                    this.contentLength = 0;
+                    this.contentLeft = 0;
+            
+                    return this.callNextState(idx, 
+                        data, this.frameState);
+                }
+            } while (++idx < length);
+            
+            return data.subarray(idx);
+        }
+        return data;
     }
 
     frameState(data) {
