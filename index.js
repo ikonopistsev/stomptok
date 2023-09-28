@@ -11,6 +11,7 @@ const NRT = '\r\n';
 const NL2T = '\n\n';
 const NRL2T = '\r\n\r\n';
 const D2T = ':';
+const maxBufferSize = 2048;
 
 // we don't konw is it frame?
 const errInvalReq = { code: 400, message: 'inval_req' };
@@ -216,25 +217,24 @@ class StompTok extends EventEmitter {
 
     store(data) {
         const { length } = data;
-        if (length > 500) {
-            // too big
+        if (length > maxBufferSize) {
+            this.emit('error', errTooBig);
+            return false;
         }
         this.prevData = data;
+        return true;
     }
 
     parse(input) {
         let data = this.concat(input);
-        // prev buffer length
-        const { length } = data;
-        while (data.length) {
-            // now data become subarray of original data
-            data = this.parseState(data);
-            // not parsed if length not changed
-            if (length == data.length) {
-                this.store(data);
-                return false;
+        if (data.length) {
+            const tail = this.parseState(data);
+            if (tail.length) {
+                return this.store(tail);
             }
         }
         return true;
     }
 }
+
+module.exports = StompTok;
