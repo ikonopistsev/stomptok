@@ -111,32 +111,28 @@ class StompTok extends EventEmitter {
         // Each header entry is terminated by an EOL. A blank line (i.e. an extra EOL) indicates the end of the headers
         // and the beginning of the body. The body is then followed by the NULL octet. 
 
-        // if we have both separators in buffer
-        if ((idxNL != -1) && (idxNR != -1)) {
-            // we need to find smallest index
-            if (idxNL < idxNR) {
-                // save index
-                idx = idxNL;
-                // set header separator to NL
-                // headerSep = NLT;
+        if (idxNL != -1) {
+            if (idxNR != -1) {
+                // if we have both separators in buffer
+                if (idxNL < idxNR) {
+                    // save index
+                    idx = idxNL;
+                    // set header separator to NL
+                    // headerSep = NLT;
+                } else {
+                    idx = idxNR;
+                    // set header separator to NR
+                    headerSep = NRT;
+                    bodySep = NRL2T;
+                }
             } else {
-                idx = idxNR;
-                // set header separator to NR
-                headerSep = NRT;
-                bodySep = NRL2T;
-            }
-        } else {
-            // if we have only one separator in buffer
-            if (idxNL != -1) {
                 idx = idxNL;
-                // set header separator to NL
-                // headerSep = NLT;
-            } else if (idxNR != -1) {
-                idx = idxNR;
-                // set header separator to NR
-                headerSep = NRT;
-                bodySep = NRL2T;
             }
+        } else if (idxNR != -1) {
+            idx = idxNR;
+            // set header separator to NR
+            headerSep = NRT;
+            bodySep = NRL2T;
         }
         // frame found
         if (idx != -1) {
