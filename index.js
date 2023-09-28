@@ -67,6 +67,7 @@ class StompTok extends EventEmitter {
         this.contentLength = 0;
         this.contentLeft = 0;
         this.prevData = null;
+        this.splitHeaderKey = false;
     }
 
     callNextState(idx, data, nextState) {
@@ -98,14 +99,44 @@ class StompTok extends EventEmitter {
 
     frameState(data) {
         // try to find frame(text-part)[\n\n]body(binary-part)[separator]
-        let bodySep = NL2T;
+        let idx = -1;
         let headerSep = NLT;
-        let idx = data.indexOf(bodySep);
-        if (idx == -1) {
-            // try to find frame(text-part)[\r\n\r\n]body(binary-part)[separator]
-            bodySep = NRL2T;
-            headerSep = NRT;
-            idx = data.indexOf(bodySep);
+        let bodySep = NL2T;
+        const idxNL = data.indexOf(bodySep);
+        const idxNR = data.indexOf(NRL2T);
+
+        // The frame starts with a command string terminated by an end-of-line (EOL), 
+        // which consists of an OPTIONAL carriage return (octet 13) followed by a REQUIRED line feed (octet 10). 
+        // Following the command are zero or more header entries in <key>:<value> format. 
+        // Each header entry is terminated by an EOL. A blank line (i.e. an extra EOL) indicates the end of the headers
+        // and the beginning of the body. The body is then followed by the NULL octet. 
+
+        // if we have both separators in buffer
+        if ((idxNL != -1) && (idxNR != -1)) {
+            // we need to find smallest index
+            if (idxNL < idxNR) {
+                // save index
+                idx = idxNL;
+                // set header separator to NL
+                // headerSep = NLT;
+            } else {
+                idx = idxNR;
+                // set header separator to NR
+                headerSep = NRT;
+                bodySep = NRL2T;
+            }
+        } else {
+            // if we have only one separator in buffer
+            if (idxNL != -1) {
+                idx = idxNL;
+                // set header separator to NL
+                // headerSep = NLT;
+            } else if (idxNR != -1) {
+                idx = idxNR;
+                // set header separator to NR
+                headerSep = NRT;
+                bodySep = NRL2T;
+            }
         }
         // frame found
         if (idx != -1) {
@@ -124,8 +155,12 @@ class StompTok extends EventEmitter {
                         if ((this.contentLength == 0) && isHeaderContentLength(headerKey)) {
                             this.contentLength = this.contentLeft = parseInt(headerVal);            
                         }
-                        this.emit('headerKey', headerKey);
-                        this.emit('headerVal', headerVal);
+                        if (this.splitHeaderKey) {
+                            this.emit('headerKey', headerKey);
+                            this.emit('headerVal', headerVal);
+                        } else {
+                            this.emit('header', headerKey, headerVal);
+                        }
                     } else {
                         this.emit('error', errInvalFrame);
                         return data.subarray(idx);
